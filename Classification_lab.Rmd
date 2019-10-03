@@ -174,19 +174,30 @@ median(resid(Ridge_regression))
 $$Lasso Regression=\sum_{i=1}^{n}(y_i - w_0 - \sum_{j=1}^{p}w_jx_{ij})^2 + \lambda\sum_{j=1}^p|w_j|$$
 2. Create and train model 
 ```{r}
+ctrl =  trainControl(method = "boot", 15)
 
+Lasso_regression <- train(Temp ~ Wind + Month, data = train_regression,
+                          method = 'lasso', trControl= ctrl) 
 ```
 
 ```{r}
+Lasso_regression
 ```
 
 Examine the residuals 
 ```{r}
+lasso_test_pred <- predict(Lasso_regression, newdata = test_regression)
 
 #plot the predicted values vs the observed values
-
+plot_lasso_test_pred <- data.frame(Temp_test_lasso_pred = lasso_test_pred, 
+                                   Observed_Temp = test_regression$Temp)
+ggplot(data = plot_lasso_test_pred) +
+  geom_point(aes(x=Observed_Temp, y = Temp_test_lasso_pred)) + 
+  ggtitle("True Temp Value vs Predicted Temp Value Lasso Regression") +
+  theme_bw()
 
 #median residual value should be close to zero
+median(resid(Lasso_regression))
 ```
 
 
@@ -414,14 +425,113 @@ ggplot(data = test_classifier_log) +
 
 1. Use the Breast Cancer dataset from the mlbench package, and predict whether the cancer is malignant or benign using one of the algorithms we learned about in class. Give some rationale as to why you chose this algorithm. Plot ROC curves, and confusion matrices. If you are choosing a hyperparameter like K or lambda, explain how and why you chose it. 
 
-```{r}
-#libra
-#train
-#test
+Initially, logistic regression was chosen as the model method because it has a binary outcome prediction that matches either benign or malignant, and it can incorporate multiple independent variables to accomodate the 9 included in the dataset.
 
-##ctrl <- trainControl()
-## <- train(, data = , method = "", trControl = ctrl)
-## predict(, newdata="")
+```{r}
+library(mlbench)
+library(e1071)
+data(BreastCancer)
+
+#removing NA values and ID number
+BreastCancer_mod <- na.omit(BreastCancer)
+BreastCancer_mod <- BreastCancer_mod[c(-1)]
+
+#split into training and test set 
+train_size <- floor(0.75 * nrow(BreastCancer_mod))
+set.seed(543)
+train_pos <- sample(seq_len(nrow(BreastCancer_mod)), size = train_size)
+train_classifier <- BreastCancer_mod[train_pos,]
+test_classifier <- BreastCancer_mod[-train_pos,]
+
+#check training and testing set counts
+dim(train_classifier)
+dim(test_classifier)
+
+#defining the two classes to be considered
+train_classifier_log <- train_classifier[c(which(train_classifier$Class == "benign"),
+                                           which(train_classifier$Class == "malignant")),]
+test_classifier_log <- test_classifier[c(which(test_classifier$Class == "benign"), 
+                                         which(test_classifier$Class == "malignant")),]
+
+train_classifier_log$Class <- factor(train_classifier_log$Class)
+test_classifier_log$Class <- factor(test_classifier_log$Class)
+
+#create logistic regression model - code commented out because of lack of convergence warning message
+ctrl <- trainControl(method = "repeatedcv", repeats = 15,classProbs = T,
+                     savePredictions = T)
+
+#logistic_regression <- train(Class~ ., data = train_classifier_log, 
+#                             method = "glm", family= "binomial", trControl = ctrl)
+```
+Unfortunately, the logistic regression model does not converge, so a different type of model needs to be created. Linear discriminant analysis also works to predict classes of outcomes, as opposed to continuous ones, and is more stable than logistic regression for some datasets. The data should be normally distrbuted with class specific mean and common variance, which is assessed in the first section of code below.
+
+```{r}
+#using train and test sets already defined in prior model
+dim(train_classifier)
+dim(test_classifier)
+
+#checking to see if data distribution fits LDA assumptions
+thickness <- ggplot(data = BreastCancer_mod, aes(x = Cl.thickness, fill = Class)) + 
+  geom_bar(position="identity")  +
+  theme_bw()
+adhesion <- ggplot(data = BreastCancer_mod, aes(x = Marg.adhesion, fill = Class)) + 
+  geom_bar(position="identity") +
+  theme_bw()
+mitoses <- ggplot(data = BreastCancer_mod, aes(x = Mitoses, fill = Class)) + 
+  geom_bar(position="identity") +
+  theme_bw()
+
+grid.arrange(thickness, adhesion, mitoses)
+```
+
+While the data does not conform to these standards, the model was generated to assess performance regardless, and did quite favorably, as shown in the confusion matrix (96% accuracy) and ROC plot below.
+
+```{r}
+#train LDA model on training set
+LDA <- lda(Class~ ., 
+           data= train_classifier, cv= T)
+```
+
+```{r}
+#viewing LDA model
+LDA
+```
+
+```{r}
+#applying the LDA model to the testing dataset and printing a confusion matrix of results
+LDA_predict <- predict(LDA, newdata=test_classifier)
+confusionMatrix(LDA_predict$class, reference = test_classifier$Class)
+```
+
+```{r}
+#save the predictions in a new variable
+predictions <- as.data.frame(LDA_predict$posterior) %>% 
+  rownames_to_column("idx")
+
+test_classifier <- test_classifier %>% 
+  rownames_to_column("idx")
+
+predictions_actual <- full_join(predictions,test_classifier, by = "idx" )
+
+#choose the two classes we want to compare, benign and malignant
+set_true_labels <- predictions_actual %>% 
+  filter(Class %in% c("benign", "malignant")) %>% 
+  mutate(Class = as.character(Class))
+  
+#make dataframe of the prediction and the label
+pred_label <- data.frame(prediction = set_true_labels$benign,
+                         label = set_true_labels$Class)
+
+#visualize each datapoint prediction
+ggplot(pred_label, aes(x = 1:171, y = prediction, color = label))+
+  geom_point()
+
+pred <- prediction(set_true_labels$benign, set_true_labels$Class, 
+label.ordering = c("malignant", "benign")) 
+
+#visualize performance as a ROC plot comparing false positive to true positive
+perf <- performance(pred,"tpr","fpr")
+plot(perf)
 ```
 
 
